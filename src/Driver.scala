@@ -22,7 +22,10 @@ object Driver {
 
     val docs = sc.parallelize(toydata)
 
-    new OnlineHDPOptimizer(docs).update(docs)
+    val op = new OnlineHDPOptimizer(docs)
+    op.update(docs)
+
+    println(op.m_lambda)
 
   }
 

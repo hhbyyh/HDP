@@ -92,7 +92,7 @@ class OnlineHDPOptimizer(
                           val m_scale: Double = 1.0,
                           val m_var_converge: Double = 0.0001,
                           val iterations: Int = 10
-                          ) extends Serializable{
+                          ) extends Serializable {
 
 
   val lda_alpha: Double = 1D
@@ -123,11 +123,9 @@ class OnlineHDPOptimizer(
 
 
   def update(docs: RDD[(Long, Vector)]): Unit = {
-    while (true) {
-      for (i <- 1 to iterations) {
-        val chunk = docs
-        update_chunk(chunk)
-      }
+    for (i <- 1 to iterations) {
+      val chunk = docs
+      update_chunk(chunk)
     }
   }
 
@@ -150,11 +148,11 @@ class OnlineHDPOptimizer(
     val Wt = word_list.length // length of words in these documents
 
     // ...and do the lazy updates on the necessary columns of lambda
-//    rw = np.array([self.m_r[t] for t in self.m_timestamp[word_list]])
-//    self.m_lambda[:, word_list] *= np.exp(self.m_r[-1] - rw)
-//    self.m_Elogbeta[:, word_list] = \
-//    sp.psi(self.m_eta + self.m_lambda[:, word_list]) - \
-//    sp.psi(self.m_W * self.m_eta + self.m_lambda_sum[:, np.newaxis])
+    //    rw = np.array([self.m_r[t] for t in self.m_timestamp[word_list]])
+    //    self.m_lambda[:, word_list] *= np.exp(self.m_r[-1] - rw)
+    //    self.m_Elogbeta[:, word_list] = \
+    //    sp.psi(self.m_eta + self.m_lambda[:, word_list]) - \
+    //    sp.psi(self.m_W * self.m_eta + self.m_lambda_sum[:, np.newaxis])
 
 
     val rw: BDV[Double] = new BDV(word_list.map(id => m_timestamp(id)).map(t => m_r(t)).toArray)
@@ -162,7 +160,7 @@ class OnlineHDPOptimizer(
     val exprw: BDV[Double] = exp(rw.map(d => m_r.last - d))
 
     val wordsMatrix = m_lambda(::, word_list).toDenseMatrix
-    for(row <- 0 until wordsMatrix.rows){
+    for (row <- 0 until wordsMatrix.rows) {
       wordsMatrix(row, ::) := (wordsMatrix(row, ::).t :* exprw).t
     }
     m_lambda(::, word_list) := wordsMatrix
@@ -319,7 +317,7 @@ class OnlineHDPOptimizer(
       }
 
       v(0, ::) := sum(phi_all(::, m_K - 1)) + 1.0
-      val selected = phi_all(::, 2 until m_K)
+      val selected = phi_all(::, 1 until m_K)
       val t_sum = sum(selected(::, *)).toDenseVector
       val phi_cum = flipud(t_sum)
       v(1, ::) := (flipud(accumulate(phi_cum)) + m_alpha).t
@@ -331,7 +329,7 @@ class OnlineHDPOptimizer(
 
       val diff = log_var_phi.copy
       for (i <- 0 to diff.rows - 1) {
-        diff(i, ::) := (diff(i, ::).t :- doc_word_counts).t
+        diff(i, ::) := (Elogsticks_1st :- diff(i, ::).t).t
       }
 
       likelihood += sum(diff :* var_phi)
@@ -339,18 +337,24 @@ class OnlineHDPOptimizer(
       // v part/ v in john's notation, john's beta is alpha here
       val log_alpha = log(m_alpha)
       likelihood += (m_K - 1) * log_alpha
-      val dig_sum = digamma(sum(v))
+      val dig_sum = (digamma(sum(v(::, *)))).toDenseVector
       val vCopy = v.copy
       for (i <- 0 until v.cols) {
         vCopy(::, i) := BDV[Double](1.0, m_alpha) - vCopy(::, i)
       }
-      likelihood += sum(vCopy * (digamma(v) - dig_sum))
-      likelihood -= sum(lgamma(sum(v(*, ::)))) - sum(lgamma(v))
+
+      val dv = digamma(v)
+      for (i <- 0 until v.rows) {
+        dv(i, ::) := dv(i, ::) - dig_sum.t
+      }
+
+      likelihood += sum(vCopy :* dv)
+      likelihood -= sum(lgamma(sum(v(::, *)))) - sum(lgamma(v))
 
       // Z part
       val log_phiCopy = log_phi.copy
-      for (i <- 0 until log_phiCopy.cols) {
-        log_phiCopy(::, i) := Elogsticks_2nd - log_phiCopy(::, i)
+      for (i <- 0 until log_phiCopy.rows) {
+        log_phiCopy(i, ::) := (Elogsticks_2nd - log_phiCopy(i, ::).t).t
       }
       likelihood += sum(log_phiCopy :* phi)
 
@@ -374,7 +378,8 @@ class OnlineHDPOptimizer(
 
     // update the suff_stat ss
     // this time it only contains information from one doc
-    ss.m_var_sticks_ss += sum(var_phi_out(*, ::))
+    val sumPhiOut = sum(var_phi_out(::, *))
+    ss.m_var_sticks_ss += sumPhiOut.toDenseVector
 
     val phiCopy = phi.copy.t
     for (i <- 0 until phi.rows) {
